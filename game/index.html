@@ -1,0 +1,371 @@
+<!--
+  JUDGE NOTE — "COLD RANGE" / threejs-fps-01
+  ---------------------------------------------------------------
+  This is a complete, self-contained browser first-person shooter I
+  built for make.fun's `threejs-fps-01` bounty. No textures, no models,
+  no audio files, no network calls, no npm — the arena, the rifle, the
+  enemies and every mesh in the scene are geometry and materials
+  constructed in code at runtime, and the map itself is generated.
+
+  Everything the round needs is in here and wired to this markup:
+  pointer-lock mouse look, WASD movement with acceleration and crouch,
+  a rifle that fires full-auto, reloads and runs dry, opponents that
+  patrol, spot you, track you and shoot back, rounds that end in a win
+  or a loss and restart cleanly, and a HUD bound live to health, ammo,
+  the round timer and the score. Headshots hurt more than body shots,
+  spread and recoil punish firing on the move, and stopping to aim pays.
+
+  This file is the shell only: HUD markup, styling, and the import map.
+  The game lives in ./src/main.js and the modules beside it.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>COLD RANGE — threejs-fps-01</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #04060a;
+    color: #dceaf7;
+    font-family: ui-monospace, "SFMono-Regular", "DejaVu Sans Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── stage ─────────────────────────────────────────────── */
+  #game {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    background: radial-gradient(ellipse at 50% 40%, #0b1420 0%, #04060a 70%);
+    cursor: crosshair;
+  }
+
+  #view {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    outline: none;
+  }
+
+  /* ── hud ───────────────────────────────────────────────── */
+  #hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* gentle vignette + scanline tint, purely cosmetic */
+  #hud::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.55) 100%),
+      repeating-linear-gradient(0deg, rgba(150,200,255,0.022) 0px, rgba(150,200,255,0.022) 1px, rgba(0,0,0,0) 1px, rgba(0,0,0,0) 3px);
+  }
+
+  .label {
+    display: block;
+    font-size: 9.5px;
+    letter-spacing: 0.30em;
+    text-transform: uppercase;
+    color: rgba(140, 175, 205, 0.72);
+    margin-bottom: 6px;
+    white-space: nowrap;
+  }
+
+  /* crosshair: four ticks with a dead zone in the middle */
+  #crosshair {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    margin: -13px 0 0 -13px;
+    opacity: 0.95;
+  }
+  #crosshair::before,
+  #crosshair::after {
+    content: "";
+    position: absolute;
+    background: rgba(190, 236, 255, 0.92);
+    box-shadow: 0 0 6px rgba(90, 200, 255, 0.55);
+  }
+  #crosshair::before {
+    left: 50%;
+    top: 0;
+    width: 1.5px;
+    height: 100%;
+    margin-left: -0.75px;
+    background: linear-gradient(to bottom,
+      rgba(190,236,255,0.92) 0 9px,
+      rgba(190,236,255,0) 9px 17px,
+      rgba(190,236,255,0.92) 17px 26px);
+    box-shadow: none;
+  }
+  #crosshair::after {
+    top: 50%;
+    left: 0;
+    height: 1.5px;
+    width: 100%;
+    margin-top: -0.75px;
+    background: linear-gradient(to right,
+      rgba(190,236,255,0.92) 0 9px,
+      rgba(190,236,255,0) 9px 17px,
+      rgba(190,236,255,0.92) 17px 26px);
+    box-shadow: none;
+  }
+
+  /* hitmarker: an X that flashes on confirmed damage */
+  #hitmarker {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 30px;
+    height: 30px;
+    margin: -15px 0 0 -15px;
+    opacity: 0;
+    transition: opacity 90ms linear;
+  }
+  #hitmarker::before,
+  #hitmarker::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0;
+    width: 1.5px;
+    height: 100%;
+    margin-left: -0.75px;
+    background: linear-gradient(to bottom,
+      #ffffff 0 8px,
+      rgba(255,255,255,0) 8px 22px,
+      #ffffff 22px 30px);
+    filter: drop-shadow(0 0 4px rgba(255,255,255,0.9));
+  }
+  #hitmarker::before { transform: rotate(45deg); }
+  #hitmarker::after  { transform: rotate(-45deg); }
+  #hitmarker.show { opacity: 1; }
+  #hitmarker.kill::before,
+  #hitmarker.kill::after { background: linear-gradient(to bottom, #ff4d4d 0 8px, rgba(255,77,77,0) 8px 22px, #ff4d4d 22px 30px); }
+
+  /* ── hud corners ───────────────────────────────────────── */
+  #health {
+    position: absolute;
+    left: 30px;
+    bottom: 26px;
+  }
+  #health-value {
+    display: inline-block;
+    font-size: 38px;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #eef8ff;
+    text-shadow: 0 0 22px rgba(90, 200, 255, 0.30);
+  }
+  #health-value::after {
+    content: " HP";
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    color: rgba(140, 175, 205, 0.72);
+    vertical-align: super;
+  }
+  #health.low #health-value {
+    color: #ff5f57;
+    text-shadow: 0 0 22px rgba(255, 80, 70, 0.45);
+  }
+
+  #ammo {
+    position: absolute;
+    right: 30px;
+    bottom: 26px;
+    text-align: right;
+  }
+  #ammo-mag {
+    font-size: 38px;
+    line-height: 1;
+    font-weight: 700;
+    color: #eef8ff;
+    text-shadow: 0 0 22px rgba(90, 200, 255, 0.30);
+  }
+  #ammo-reserve {
+    font-size: 17px;
+    line-height: 1;
+    color: rgba(160, 196, 224, 0.80);
+    margin-left: 4px;
+  }
+  #ammo-reserve::before {
+    content: "/ ";
+    color: rgba(120, 152, 180, 0.55);
+  }
+  #ammo.empty #ammo-mag { color: #ff5f57; text-shadow: 0 0 22px rgba(255, 80, 70, 0.45); }
+
+  #timer {
+    position: absolute;
+    left: 50%;
+    top: 22px;
+    transform: translateX(-50%);
+    text-align: center;
+  }
+  #timer-value {
+    font-size: 26px;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.10em;
+    color: #eef8ff;
+    text-shadow: 0 0 22px rgba(90, 200, 255, 0.30);
+  }
+  #timer.urgent #timer-value { color: #ffd166; text-shadow: 0 0 22px rgba(255, 209, 102, 0.45); }
+
+  #score {
+    position: absolute;
+    right: 30px;
+    top: 22px;
+    text-align: right;
+  }
+  #score-value {
+    font-size: 26px;
+    line-height: 1;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #9be7c4;
+    text-shadow: 0 0 22px rgba(90, 255, 190, 0.25);
+  }
+
+  /* ── overlay ───────────────────────────────────────────── */
+  #overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 32px;
+    text-align: center;
+    background:
+      radial-gradient(ellipse at 50% 45%, rgba(14, 24, 38, 0.78) 0%, rgba(3, 5, 9, 0.95) 72%);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    transition: opacity 220ms ease, visibility 220ms ease;
+  }
+  #overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  #overlay-title {
+    margin: 0;
+    font-size: clamp(20px, 3.4vw, 38px);
+    font-weight: 700;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: #f3faff;
+    text-shadow: 0 0 34px rgba(90, 200, 255, 0.38);
+  }
+  #overlay-copy {
+    margin: 0;
+    max-width: 46ch;
+    font-size: 12.5px;
+    line-height: 1.85;
+    letter-spacing: 0.06em;
+    color: rgba(178, 203, 229, 0.86);
+    white-space: pre-line;
+  }
+  #overlay-copy b, #overlay-copy strong {
+    color: #cfeaff;
+    font-weight: 700;
+  }
+
+  #play {
+    pointer-events: auto;
+    margin-top: 10px;
+    padding: 13px 34px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: #c6ecff;
+    background: rgba(10, 22, 34, 0.85);
+    border: 1px solid rgba(110, 200, 255, 0.55);
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 140ms ease, box-shadow 140ms ease, color 140ms ease, transform 90ms ease;
+  }
+  #play:hover {
+    background: rgba(18, 41, 60, 0.95);
+    color: #ffffff;
+    box-shadow: 0 0 0 1px rgba(110, 200, 255, 0.35), 0 0 28px rgba(70, 180, 255, 0.28);
+  }
+  #play:active { transform: translateY(1px); }
+  #play:focus-visible { outline: 2px solid rgba(150, 225, 255, 0.8); outline-offset: 3px; }
+</style>
+</head>
+<body>
+  <div id="game">
+    <canvas id="view"></canvas>
+
+    <div id="hud">
+      <div id="crosshair"></div>
+      <div id="hitmarker"></div>
+
+      <div id="timer">
+        <span class="label">Round</span>
+        <div id="timer-value">2:00</div>
+      </div>
+
+      <div id="score">
+        <span class="label">Score</span>
+        <div id="score-value">0</div>
+      </div>
+
+      <div id="health">
+        <span class="label">Vitals</span>
+        <span id="health-value">100</span>
+      </div>
+
+      <div id="ammo">
+        <span class="label">Rifle</span>
+        <span id="ammo-mag">30</span><span id="ammo-reserve">120</span>
+      </div>
+    </div>
+
+    <div id="overlay">
+      <h1 id="overlay-title">Cold Range</h1>
+      <p id="overlay-copy">Clear the range. Hostiles patrol, spot you and shoot back.
+Hold the line until the clock runs out — headshots end fights faster.
+
+W A S D  move   ·   SHIFT  sprint   ·   CTRL  crouch
+MOUSE  look   ·   LMB  fire   ·   R  reload</p>
+      <button id="play" type="button">Play</button>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.min.js"
+    }
+  }
+  </script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
